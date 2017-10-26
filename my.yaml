@@ -1,0 +1,166 @@
+kind: Template
+apiVersion: v1
+metadata:
+  name: zookeeper
+  creationTimestamp:
+  annotations:
+    openshift.io/display-name: Zookeeper
+    iconClass: icon-database
+    tags: database,zookeeper
+labels:
+  template: zookeeper
+objects:
+- kind: Service
+  apiVersion: v1
+  metadata:
+    name: "${ZOOKEEPER_SERVICE_NAME}"
+    labels:
+      name: zookeeper
+  spec:
+    ports:
+    - name: client
+      protocol: TCP
+      port: 2181
+      targetPort: 2181
+      nodePort: 0
+    - name: followers
+      protocol: TCP
+      port: 2888
+      targetPort: 2888
+      nodePort: 0
+    - name: election
+      protocol: TCP
+      port: 3888
+      targetPort: 3888
+      nodePort: 0
+    selector:
+      name: "${ZOOKEEPER_SERVICE_NAME}"
+      component: zookeeper
+      clusterName: "${ZOOKEEPER_SERVICE_NAME}"
+    type: ClusterIP
+    sessionAffinity: None
+- kind: ReplicationController
+  apiVersion: v1
+  metadata:
+    name: ${ZOOKEEPER_SERVICE_NAME}-${NUMBER_IN_REPLICAS}
+  spec:
+#    revisionHistoryLimit: 3
+#    triggers:
+#    - type: ConfigChange
+    replicas: 1
+#    selector:
+#      name: "${ZOOKEEPER_SERVICE_NAME}"
+    template:
+      metadata:
+        labels:
+          name: "${ZOOKEEPER_SERVICE_NAME}"
+          component: zookeeper
+          clusterName: "${ZOOKEEPER_SERVICE_NAME}"
+      spec:
+        hostname: ${ZOOKEEPER_SERVICE_NAME}-${NUMBER_IN_REPLICAS}
+        serviceAccountName: zookeeper
+        containers:
+        - name: zookeeper
+          image: "${ZOOKEEPER_DOCKER_IMAGE}"
+          ports:
+          - containerPort: 2181
+            protocol: TCP
+          - containerPort: 2888
+            protocol: TCP
+          - containerPort: 3888
+            protocol: TCP
+          resources:
+            requests:
+              cpu: "${CPU_LIMIT}"
+              memory: "${MEMORY_LIMIT}"
+            limits:
+              cpu: "${CPU_LIMIT}"
+              memory: "${MEMORY_LIMIT}"
+          volumeMounts:
+          - name: data
+            mountPath: "/opt/zookeeper/data"
+          - name: log
+            mountPath: "/opt/zookeeper/log"
+          - name: zookeeper-persistent-storage
+            mountPath: "/var/opt/zookeeper/zookeeper-data"
+          env:
+          - name: ZOOKEEPER_CLUSTER_HOST
+            value: "${ZOOKEEPER_SERVICE_NAME}"
+          - name: ZOOKEEPER_CLUSTER_PORT
+            value: "2181"
+          livenessProbe:
+            exec:
+              command: ['./bin/zkHealth.sh', 'health']
+            initialDelaySeconds: 15
+            timeoutSeconds: 5
+            periodSeconds: 10
+            successThreshold: 1
+            failureThreshold: 5
+          readinessProbe:
+            exec:
+              command: ['./bin/zkHealth.sh', 'health']
+            initialDelaySeconds: 15
+            timeoutSeconds: 5
+            periodSeconds: 10
+            successThreshold: 3
+            failureThreshold: 5
+          terminationMessagePath: "/dev/termination-log"
+          imagePullPolicy: Always
+          securityContext:
+            privileged: false
+        volumes:
+        - name: data
+          emptyDir: {}
+        - name: log
+          emptyDir: {}
+        - name: zookeeper-persistent-storage
+          persistentVolumeClaim:
+            claimName: ${PVC}
+        nodeSelector:
+          kubernetes.io/hostname: ${OPENSHIFT_NODE}
+          region: primary
+        restartPolicy: Always
+        dnsPolicy: ClusterFirst
+parameters:
+- name: ZOOKEEPER_DOCKER_IMAGE
+  description: docker image for zookeeper
+  value: "docker.netcracker.com:17005/search/zookeeper:latest"
+  required: true
+- name: MEMORY_LIMIT
+  displayName: Memory Limit
+  description: Maximum amount of memory the container can use.
+  value: 512Mi
+- name: CPU_LIMIT
+  displayName: CPU Limit
+  description: Maximum amount of CPU the container can use.
+  value: "0.5"
+- name: ZOOKEEPER_SERVICE_NAME
+  displayName: Database Service Name
+  description: The name of the OpenShift Service exposed for the database.
+  value: zookeeper
+  required: true
+- name: PVC
+  displayName: Persistent Volume Claim
+  description: Persistent Volume Claim for pod
+  value: pvc-zookeeper-mano-platform-elk-develop-1
+- name: OPENSHIFT_NODE
+  displayName: name of Node
+  description: Name of openshift node
+  value: paas-apps-node-1-8
+- name: NUMBER_IN_REPLICAS
+  displayName: Suffix number
+  description: Number of pod in zookeeper cluster
+  value: 1
+- name: ZOOKEEPER_COUNT_NODE
+  displayName: Count node in cluster
+  description: "|
+    Running ZooKeeper in standalone mode is convenient for evaluation, some development, and testing.
+    But in production, you should run ZooKeeper in replicated mode.
+    A replicated group of servers in the same application is called a quorum, and in replicated mode,
+    all servers in the quorum have copies of the same configuration file.
+    For replicated mode, a minimum of three servers are required, and it is strongly recommended
+    that you have an odd number of servers. If you only have two servers,
+    then you are in a situation where if one of them fails, there are not enough machines
+    to form a majority quorum. Two servers is inherently less stable than a single server,
+    because there are two single points of failure."
+  value: "1"
